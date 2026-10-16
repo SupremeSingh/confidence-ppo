@@ -1,78 +1,88 @@
 # Confidence or correctness?
 
-Does expressed confidence or self-criticism change how effectively an LLM learns from correctness rewards?
+**Does the way a language model expresses confidence change how well it learns from experience?**
 
-This is a standalone Duke-cluster experiment. It contains its own PPO implementation snapshot, configuration, launchers, tests and dependency setup. It never imports code or Python environments from the original project. The actor and critic are separate Transformers; the small linear critic is not used.
+A language model writes an answer one token at a time. Reinforcement learning lets it practice: generate an answer, receive a reward, and adjust its parameters so useful behavior becomes more likely.
 
-## Experiment
+The same model can be prompted to sound decisive or to question its reasoning. These instructions may change what it tries, whether it catches mistakes, and how long it spends answering. This project asks whether those differences change **learning**, beyond changing the wording of a single answer.
 
-Three conditions start from the same Qwen2.5-Math-1.5B weights: neutral, confident and self-critical instructions. Confident and critical instructions both permit checking calculations and correcting mistakes. The ordinary math instruction and answer format are identical. This manipulates prompted behavior, not psychological confidence.
+## From answers to learning
 
-- **Data:** 512 training, 64 validation and 300 test questions from a copied Numina split. Normalized question families cannot cross splits. Every selected question must fit all three prompts.
-- **Training:** five matched seeds per condition; 20 PPO updates × 64 answers = 1,280 generated training answers per run. Same two GPUs, sampling, response ceiling, correctness reward and predeclared `more_fitting` PPO profile. Different styles can consume different numbers of tokens.
-- **Evaluation:** before/after greedy answers under the assigned instruction and a common neutral instruction. Full responses, token counts, verifier statuses and truncation are saved.
-- **Primary endpoint:** learning gain under the common neutral instruction, confident versus neutral and critical versus neutral. Assigned-style results are secondary. Paired question/seed bootstrap intervals include 97.5% intervals for the two planned comparisons.
-- **Interpretation:** five seeds and previously inspected questions make this an exploratory pilot. Significance is not guaranteed. Manually check style compliance and verifier errors. If neutral PPO does not learn, investigate the baseline before scaling. Differences can involve checking behavior, prompt wording and response length as well as confidence.
+Suppose the question is “What is 17 × 18?” The correct answer is 306. A confident answer might state it directly; a self-critical answer might check the multiplication first. Either can still be right or wrong.
 
-The code in `src/math_rl/` is a private snapshot of the existing runtime, with explicit evaluation under both prompts. Some shared helpers retain other critic implementations, but these are not selected. No changes to the original repository are needed.
+We use **Proximal Policy Optimization (PPO)** with two neural networks:
 
-## 1. Make this a separate repository
+1. The **actor** generates a solution. Its state is the question plus the answer written so far; its next action is a token.
+2. **Math-Verify** checks the final answer and supplies a correctness reward. Confident wording earns no extra reward.
+3. A separate **critic** estimates expected future reward at each prefix. Generalized Advantage Estimation (GAE) combines these estimates with the observed reward to construct a learning signal.
+4. PPO updates the actor with a clipped objective that limits the incentive for large probability changes on sampled actions. The critic learns to better fit its value targets.
 
-On your Mac, copy this folder outside the original project:
+The model learns from answers it generates and an external correctness signal. It does not decide for itself which answers deserve rewards.
 
-```bash
-rsync -a --exclude='__pycache__' --exclude='.pytest_cache' \
-  /Users/manmit/Desktop/rl_ms_project/sidequests/confidence_ppo/ \
-  /Users/manmit/Desktop/confidence_ppo/
-cd /Users/manmit/Desktop/confidence_ppo
-git init
-git add .
-git commit -m "Initialize standalone confidence PPO study"
+## The experiment
+
+Every run starts from the same **Qwen2.5-Math-1.5B** weights. We vary an instruction before the question:
+
+| Condition | Requested behavior |
+|---|---|
+| Neutral | Work through the problem carefully. |
+| Confident | Express confidence while checking calculations and correcting mistakes when needed. |
+| Self-critical | Examine reasoning critically while checking calculations and correcting mistakes when needed. |
+
+The answer format, reward, training questions, PPO settings and generation limits are identical. Confidence and self-criticism are **prompted behaviors**, not claims about internal feelings or beliefs.
+
+Each condition runs with five matched training seeds. Each run uses **20 updates × 64 generated answers = 1,280 training answers**. We select **512 training, 64 validation and 300 test questions** from a saved Numina split. Normalized question families cannot cross splits, and each selected question must fit every prompt.
+
+The actor and critic are separate Transformers. We use the predeclared `more_fitting` conventional PPO configuration. The original project's small linear critic is not used.
+
+## What would count as evidence?
+
+We evaluate before and after training in two ways:
+
+- **Assigned prompt:** does the model improve with the instruction it trained with?
+- **Common neutral prompt:** does the improvement remain when all models receive the same neutral instruction?
+
+The primary measurement is **learning gain under the common neutral prompt**:
+
+```text
+learning gain = accuracy after training − accuracy before training
+style effect  = gain with a style − gain in the neutral condition
 ```
 
-You can add an empty GitHub repository as `origin` and push this repository independently. Alternatively, copy the folder directly to Duke with your usual SSH alias:
+A higher final score alone is insufficient if a condition already started higher. Comparing gains helps distinguish starting performance from improvement during training.
+
+We report paired question/seed bootstrap intervals, including 97.5% intervals for the two planned comparisons against neutral. Full responses, verifier statuses, token lengths, truncation and critic health checks are saved.
+
+This is an **exploratory pilot** on previously inspected questions. Five seeds do not guarantee significance. Manually check style compliance and grading errors before interpreting results. Differences could involve checking behavior, response length or wording—not confidence alone. If neutral PPO fails to learn, investigate that baseline before drawing broad conclusions about the styles.
+
+## Run on Duke
+
+This repository has its own code, configs, Python environments and outputs. Its runtime is a private snapshot of the original project, with explicit evaluation under both prompts. After asset import, it does not import from the original project.
+
+**On the Duke login terminal**, clone once:
 
 ```bash
-rsync -av --exclude='.git' --exclude='__pycache__' --exclude='.pytest_cache' \
-  /Users/manmit/Desktop/confidence_ppo/ \
-  ms785@compsci-login-02:/usr/xtmp/ms785/confidence_ppo/
+cd /usr/xtmp/ms785
+git clone https://github.com/SupremeSingh/confidence-ppo.git
+cd confidence-ppo
 ```
 
-## 2. Import assets once on Duke
-
-The multi-gigabyte model and prepared data live on Duke, not in the local source checkout. Make physical copies into this separate directory:
+Import physical copies of the model, tokenizer, question snapshot and required metadata once:
 
 ```bash
-cd /usr/xtmp/ms785/confidence_ppo
 python3 scripts/import_assets.py \
   --from-project /usr/xtmp/ms785/rl_ms_project \
   --study outputs/numina-online-768-large-v1
 ```
 
-This copies the question snapshot, base model/tokenizer and required asset/container metadata, verifies checksums, and records `inputs/assets.json`. The original project is read only during import. Model cache symlinks are dereferenced: this copy remains usable if the original checkout is later moved. It requires enough disk space for another model copy.
+The importer verifies checksums and leaves the source unchanged. Large assets are ignored by Git; cloning alone does not transfer them. The existing checksum-verified Singularity/Apptainer image is shared by default. See `scripts/cluster_env.sh` for runtime paths; set `MATH_RL_IMAGE` if using a private image copy.
 
-After import, no original-project path is used during setup or training. Data and model weights are ignored by Git; copying only Git history to another machine does not transfer those assets. Transfer `inputs/`, `models/` and the imported `configs/assets.json` and `configs/container.sha256` separately if relocating the study. Dataset/model usage terms still apply.
-
-The Singularity/Apptainer container is a machine runtime. By default, the existing image at `/usr/xtmp/ms785/containers/verl-v041.sif` is reused and checksum checked. To make a private physical copy too:
-
-```bash
-mkdir -p containers
-cp /usr/xtmp/ms785/containers/verl-v041.sif containers/
-export MATH_RL_IMAGE="$PWD/containers/verl-v041.sif"
-```
-
-Export that variable in future submission shells if using the private image. Container and cache paths can otherwise stay shared, while code, environments, data and outputs are independent.
-
-## 3. Prepare and smoke-test
-
-From this standalone repository root:
+Submit setup, preparation and a three-condition smoke test:
 
 ```bash
 source scripts/cluster_env.sh
 bash scripts/submit.sh
 ```
-
-This schedules private environment setup, question preparation and a three-condition GPU smoke test in dependency order. Setup installs pinned VERL and the isolated Math-Verify environment in this folder. It does not modify the original project's environments. Existing cluster runtime, network access for dependency installation, and A5000 GPUs are required.
 
 After completion:
 
@@ -80,13 +90,13 @@ After completion:
 cat outputs/confidence-v1/smoke.json
 ```
 
-Only if it says `"passed": true`:
+If it shows `"passed": true`, launch all fifteen training runs and the final report:
 
 ```bash
 bash scripts/submit.sh full
 ```
 
-Fifteen training jobs run at most two at a time, followed by a report. Inspect:
+Monitor and read results:
 
 ```bash
 squeue -u "$USER"
@@ -94,18 +104,25 @@ cat outputs/confidence-v1/jobs.tsv
 cat outputs/confidence-v1/report.txt
 ```
 
-Outputs include `summary.json`, per-run critic health, checkpoints and `base-test.jsonl`, `final-test.jsonl`, `base-neutral-test.jsonl`, `final-neutral-test.jsonl`. The JSONL files contain complete responses for manual inspection and later diagnostics.
+At most two training jobs run simultaneously, each using two A5000 GPUs. Queue time is additional. Avoid duplicate submissions; partial training runs do not resume automatically. Use a new output directory if changing the protocol.
 
-Smoke takes time because each condition loads two models and evaluates before and after training under both prompts. Measure its runtime to budget the full pilot; queue time is additional. Two simultaneous jobs consume four GPUs and can compete with your main experiment for capacity. Launch after the main timing study for cleaner runtime comparisons.
+## Inspect the evidence
 
-Use a new output directory if changing the protocol. Partial training runs do not resume automatically; do not launch duplicate writers. A custom output is supported with `bash scripts/submit.sh smoke outputs/another-study` and the matching `full` command.
+`outputs/confidence-v1/summary.json` contains measurements and comparisons. Each condition's run folder contains checkpoints, critic diagnostics and complete answers:
 
-## Tests and later diagnostics
+```text
+base-test.jsonl            Before training, assigned prompt
+final-test.jsonl           After training, assigned prompt
+base-neutral-test.jsonl    Before training, common neutral prompt
+final-neutral-test.jsonl   After training, common neutral prompt
+```
+
+A later **J-lens** study could inspect matched examples around errors and corrections to explore mechanisms behind a behavioral result. These readouts would be diagnostics, not proof of causation.
+
+Run local checks with:
 
 ```bash
 PYTHONPATH=src python3 -m pytest -q
 ```
 
-Local tests cover paired statistics, seed assignment, safe physical asset copying and Slurm dependencies. Only the cluster smoke validates the actual GPU/VERL training path.
-
-J-lens is a later diagnostic: inspect selected errors and corrections using saved responses and checkpoints. Vocabulary readouts can suggest mechanisms, but do not establish that confidence caused a learning difference. No J-lens dependencies or fitting are required by this pilot.
+The aim is a small, interpretable test of whether how we ask a model to reason changes what it learns from reward—and whether that learning persists without the original instruction.
