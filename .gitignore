@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv*/
+inputs/
+models/
+outputs/
+logs/
+*.sif
+configs/environment.txt
+configs/ppo-verifier-environment.txt
+configs/pip-check.txt
+.DS_Store
+.runtime-ready
+configs/assets.json
+configs/container.sha256

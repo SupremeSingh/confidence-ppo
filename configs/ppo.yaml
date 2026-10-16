@@ -1,0 +1,9 @@
+defaults:
+  - training
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+  job:
+    chdir: false

@@ -1,0 +1,61 @@
+defaults:
+  - training
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+  job:
+    chdir: false
+
+experiment:
+  method: ppo
+  ppo_profile: legacy
+  evaluation_split: test
+  test_file: null
+  neutral_test_file: null
+  critic_statistics: batch
+  cumulative_epsilon: 0.01
+  statistics_reset_interval: 0
+  encoder_refresh_interval: 0
+  critic_alpha: 0.01
+  critic_lambda: 0.99
+  replay_capacity: 0
+  replay_max_transitions: 131072
+  replay_max_age: 4
+
+data:
+  train_files: null
+  val_files: null
+  train_batch_size: 16
+  val_batch_size: 32
+  validation_shuffle: false
+
+actor_rollout_ref:
+  model:
+    critic_feature_mode: actor
+    critic_feature_layer: final
+    critic_encoder_precision: bf16
+    critic_bottleneck_path: null
+    critic_bottleneck_sha256: null
+    critic_bottleneck_layers: []
+    critic_bottleneck_rms_eps: 0.000001
+  actor:
+    ppo_mini_batch_size: 16
+    ulysses_sequence_parallel_size: 1
+  rollout:
+    n: 4
+    log_prob_use_dynamic_bsz: false
+
+trainer:
+  total_training_steps: 30
+  total_epochs: 100
+  test_freq: 10
+  save_freq: 30
+  max_actor_ckpt_to_keep: 1
+  max_critic_ckpt_to_keep: 1
+  default_local_dir: null
+  experiment_name: math-online
+
+critic:
+  audit_dir: ${trainer.default_local_dir}/ppo-critic-audit

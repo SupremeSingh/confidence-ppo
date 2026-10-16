@@ -1,0 +1,134 @@
+# Shared completion/Math-Verify pilot settings.
+defaults:
+  - ppo_trainer
+  - _self_
+
+algorithm:
+  adv_estimator: gae
+  gamma: 1.0
+  lam: 0.95
+  use_kl_in_reward: false
+
+data:
+  train_files: data/gsm8k/train.parquet
+  val_files: data/gsm8k/val.parquet
+  custom_cls:
+    path: src/math_rl/ppo_runtime.py
+    name: CompletionDataset
+  train_batch_size: 16
+  val_batch_size: 16
+  max_prompt_length: 512
+  max_response_length: 2048
+  filter_overlong_prompts: true
+  dataloader_num_workers: 0
+  seed: 42
+
+actor_rollout_ref:
+  model:
+    path: models/qwen-math
+    external_lib: math_rl.ppo_runtime
+    override_config:
+      attention_dropout: 0.0
+    enable_gradient_checkpointing: true
+    use_remove_padding: true
+  actor:
+    strategy: fsdp
+    ppo_mini_batch_size: 16
+    ppo_micro_batch_size_per_gpu: 1
+    ppo_epochs: 2
+    clip_ratio: 0.2
+    clip_ratio_low: 0.2
+    clip_ratio_high: 0.2
+    # Larger than exp(20), VERL's maximum ratio: disables its extra dual clip.
+    clip_ratio_c: 1.0e9
+    loss_agg_mode: seq-mean-token-mean
+    use_torch_compile: false
+    entropy_coeff: 0.0
+    use_kl_loss: false
+    entropy_from_logits_with_chunking: true
+    entropy_checkpointing: true
+    optim:
+      lr: 1.0e-6
+      warmup_style: constant
+      weight_decay: 0.0
+    fsdp_config:
+      param_offload: true
+      optimizer_offload: true
+    checkpoint:
+      save_contents: [model, optimizer, extra]
+      load_contents: [model, optimizer, extra]
+  rollout:
+    name: vllm
+    mode: sync
+    dtype: bfloat16
+    n: 1
+    temperature: 1.0
+    top_p: 1.0
+    top_k: -1
+    seed: ${data.seed}
+    tensor_model_parallel_size: 1
+    gpu_memory_utilization: 0.5
+    enforce_eager: true
+    free_cache_engine: true
+    max_model_len: 2560
+    max_num_batched_tokens: 2560
+    max_num_seqs: 8
+    log_prob_micro_batch_size_per_gpu: 1
+    calculate_log_probs: true
+    val_kwargs:
+      n: 1
+      temperature: 0.0
+      do_sample: false
+
+critic:
+  model:
+    path: models/qwen-math
+    enable_gradient_checkpointing: true
+    use_remove_padding: true
+    fsdp_config:
+      param_offload: true
+      optimizer_offload: true
+  ppo_mini_batch_size: 16
+  ppo_micro_batch_size_per_gpu: 1
+  forward_micro_batch_size_per_gpu: 1
+  ppo_epochs: 2
+  # With microbatch=1, accumulation gives every valid token equal weight,
+  # divided by the fixed response budget and number of responses.
+  loss_agg_mode: seq-mean-token-sum-norm
+  cliprange_value: 0.5
+  optim:
+    lr: 1.0e-5
+    warmup_style: constant
+    weight_decay: 0.0
+  checkpoint:
+    save_contents: [model, optimizer, extra]
+    load_contents: [model, optimizer, extra]
+
+reward_model:
+  enable: false
+  reward_manager: batch
+  launch_reward_fn_async: false
+
+custom_reward_function:
+  path: src/math_rl/ppo_reward.py
+  name: compute_score
+
+trainer:
+  project_name: math-rl
+  experiment_name: ppo-pilot
+  logger: [console]
+  rollout_data_dir: ${trainer.default_local_dir}/rollouts
+  validation_data_dir: ${trainer.default_local_dir}/validation
+  nnodes: 1
+  n_gpus_per_node: 2
+  total_epochs: 10
+  total_training_steps: 10
+  val_before_train: true
+  test_freq: 5
+  save_freq: 5
+  default_local_dir: checkpoints/ppo-pilot
+  default_hdfs_dir: null
+  resume_mode: disable
+
+ray_init:
+  num_cpus: 8

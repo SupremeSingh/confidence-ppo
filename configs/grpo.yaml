@@ -1,0 +1,29 @@
+# Share the completion tokens, Math-Verify hook, model and actor optimizer with PPO.
+defaults:
+  - training
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+  job:
+    chdir: false
+
+algorithm:
+  adv_estimator: grpo
+  norm_adv_by_std_in_grpo: true
+
+data:
+  train_batch_size: 8
+
+actor_rollout_ref:
+  actor:
+    ppo_mini_batch_size: 8
+  rollout:
+    n: 4
+
+trainer:
+  experiment_name: grpo-pilot
+  default_local_dir: checkpoints/grpo-pilot
+
+# VERL enables the critic only for GAE. Inherited critic settings are unused here.
