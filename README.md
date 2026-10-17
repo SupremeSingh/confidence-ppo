@@ -165,4 +165,19 @@ mean the job is pending, running or failed; inspect its training and Slurm logs.
 One seed on 64 validation questions is diagnostic evidence. Establish a useful
 neutral baseline before expanding to multiple seeds and prompt conditions.
 
+To compare a higher actor learning rate while retaining seed 301 and the
+20-update budget, submit a separate pilot:
+
+```bash
+bash scripts/grpo_pilot.sh submit outputs/confidence-grpo-neutral-lr3e-6-v1 3e-6
+bash scripts/grpo_pilot.sh report outputs/confidence-grpo-neutral-lr3e-6-v1
+python3 scripts/diagnose_grpo.py --out outputs/confidence-grpo-neutral-lr3e-6-v1
+```
+
+The optional third argument to `submit` is the actor learning rate (default
+`1e-6`). It is stored in the pilot manifest and used by the compute job. The
+pinned console logger prints three decimal places, so these small learning
+rates appear as `0.000`; consult `run.json` for the configured value. Select
+settings using validation, then confirm across seeds before expanding the study.
+
 The aim is a small, interpretable test of whether how we ask a model to reason changes what it learns from reward—and whether that learning persists without the original instruction.

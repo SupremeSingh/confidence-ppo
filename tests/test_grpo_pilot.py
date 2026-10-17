@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import pytest
 
 
 SOURCE = Path(__file__).resolve().parents[1]
@@ -62,11 +63,12 @@ def test_changed_source_data_prevents_submission(tmp_path):
     assert not log.exists()
 
 
-def test_slurm_spooled_script_uses_submit_directory_and_grpo(tmp_path):
+@pytest.mark.parametrize('lr', [1e-6, 3e-6])
+def test_slurm_spooled_script_uses_submit_directory_and_grpo(tmp_path, lr):
     repo, env, log = setup_repo(tmp_path)
     out = repo / 'outputs/pilot'
     out.mkdir()
-    (out / 'pilot.json').write_text('{}')
+    (out / 'pilot.json').write_text(json.dumps({'actor_lr': lr}))
     case = out / 'grpo-seed301'
     case.mkdir()
     (case / 'result.json').write_text(json.dumps(dict(
@@ -87,5 +89,23 @@ def test_slurm_spooled_script_uses_submit_directory_and_grpo(tmp_path):
     assert 'experiment.method=grpo' in args
     assert 'algorithm.adv_estimator=grpo' in args
     assert f'experiment.test_file={out}/data/val.parquet' in args
-    assert 'actor_rollout_ref.actor.optim.lr=1e-6' in args
+    assert f'actor_rollout_ref.actor.optim.lr={lr:.12g}' in args
     assert 'Gain: +6.25 percentage points' in (out / 'report.txt').read_text()
+
+
+def test_custom_lr_is_saved_before_submission(tmp_path):
+    repo, env, _ = setup_repo(tmp_path)
+    subprocess.run(['bash', 'scripts/grpo_pilot.sh', 'submit', 'outputs/lr3', '3e-6'],
+                   cwd=repo, env=env, check=True, capture_output=True)
+    manifest = json.loads((repo / 'outputs/lr3/pilot.json').read_text())
+    assert manifest['actor_lr'] == 3e-6
+    assert manifest['steps'] == 20
+
+
+@pytest.mark.parametrize('lr', ['nan', 'inf', '0', '-1'])
+def test_invalid_lr_prevents_submission(tmp_path, lr):
+    repo, env, log = setup_repo(tmp_path)
+    result = subprocess.run(['bash', 'scripts/grpo_pilot.sh', 'submit', 'outputs/bad-lr', lr],
+                            cwd=repo, env=env, capture_output=True)
+    assert result.returncode != 0
+    assert not log.exists()

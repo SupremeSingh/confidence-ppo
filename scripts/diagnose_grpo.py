@@ -58,6 +58,11 @@ def diagnose(out):
         raise ValueError('Pilot result missing; inspect training and Slurm logs first')
     record = json.loads(result.read_text())
     print(f"Completed {record['method']}: {record['updates']} updates, {record['answers']} answers")
+    provenance = case / 'run.json'
+    if provenance.exists():
+        config = json.loads(provenance.read_text())['config']
+        lr = config['actor_rollout_ref']['actor']['optim']['lr']
+        print(f'Configured actor learning rate: {lr:g}')
     rows = log_metrics((out / 'grpo-seed301.log').read_text())
     print(f'\nTraining metric lines found: {len(rows)} (expected 20)')
     print('Metric                         first <=5      last <=5       min        max')
@@ -71,6 +76,7 @@ def diagnose(out):
         else:
             print(f'{key:<30} unavailable')
     print('Logged values may be rounded; nonzero gradients do not prove parameter updates.')
+    print('Pinned console logger uses 3 decimal places: small nonzero learning rates appear as 0.000.')
 
     before = read_rows(case / 'base-validation-test.jsonl')
     after = read_rows(case / 'final-validation-test.jsonl')
