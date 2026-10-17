@@ -151,7 +151,14 @@ so do not update the checkout while its PPO jobs are still running.
 ```bash
 tail -f outputs/confidence-grpo-neutral-v1/grpo-seed301.log
 bash scripts/grpo_pilot.sh report
+python3 scripts/diagnose_grpo.py
 ```
+
+The read-only diagnostic summarizes actor learning rates, gradients, policy
+metrics, training correctness, validation answer changes, lengths and verifier
+statuses. It reports mixed-reward groups when saved rollout dumps contain
+recognizable groups of four identical input prompts; otherwise it explicitly
+marks this measurement unavailable. It needs only Python's standard library.
 
 The job also generates `report.txt` automatically on success. Missing results
 mean the job is pending, running or failed; inspect its training and Slurm logs.
