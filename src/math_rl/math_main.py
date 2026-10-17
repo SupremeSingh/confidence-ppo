@@ -122,6 +122,11 @@ def run(config):
     tokenizer = hf_tokenizer(config.actor_rollout_ref.model.path)
     linear = config.experiment.method in ('ridge', 'lstd')
     roles = {Role.ActorRollout: ray.remote(FeatureActorWorker if linear else ActorRolloutRefWorker)}
+    if config.experiment.get('sampled_train_probe_n', 0):
+        if config.experiment.method != 'grpo':
+            raise ValueError('Independent sampled practice evaluation is enabled for GRPO only')
+        from math_rl.study_worker import StudyActorWorker
+        roles[Role.ActorRollout] = ray.remote(StudyActorWorker)
     if config.experiment.method == 'ppo':
         from math_rl.ppo_baseline_worker import AuditedCriticWorker
         roles[Role.Critic] = ray.remote(CriticWorker if config.experiment.ppo_profile == 'legacy' else AuditedCriticWorker)
@@ -148,17 +153,49 @@ def run(config):
         finally:
             config.experiment.test_file = saved
     initial_neutral = neutral_evaluation('base-validation' if calibration else 'base')
+    def train_probe(label):
+        path = config.experiment.get('train_probe_file')
+        if not path:
+            return None
+        saved = config.experiment.test_file
+        config.experiment.test_file = path
+        try:
+            return trainer.evaluate_test(label + '-training-probe')
+        finally:
+            config.experiment.test_file = saved
+    initial_train_probe = train_probe('base')
+    def sampled_probe(label):
+        n = config.experiment.get('sampled_train_probe_n', 0)
+        if not n:
+            return None
+        if not config.experiment.train_probe_file:
+            raise ValueError('Sampled practice evaluation requires a training-probe dataset')
+        saved = config.experiment.test_file
+        config.experiment.test_file = config.experiment.train_probe_file
+        try:
+            return trainer.evaluate_test(label + '-sampled-training-probe', samples=n,
+                sample_seed=config.experiment.sampled_train_probe_seed)
+        finally:
+            config.experiment.test_file = saved
+    initial_sampled_probe = sampled_probe('base')
     started = time.perf_counter()
     trainer.fit()
     training_seconds = time.perf_counter() - started
     final = trainer.evaluate_test('final-validation' if calibration else 'final')
     final_neutral = neutral_evaluation('final-validation' if calibration else 'final')
+    final_train_probe = train_probe('final')
+    final_sampled_probe = sampled_probe('final')
     result = dict(neutral_initial=initial_neutral, neutral_final=final_neutral, method=config.experiment.method, seed=seed, initial_test=initial, final_test=final,
         updates=trainer.completed_updates, answers=trainer.completed_updates * 64,
         initialization_seconds=init_seconds, training_seconds=training_seconds,
         training_gpu_hours=training_seconds * config.trainer.n_gpus_per_node / 3600,
         scope='Training time includes validation, checkpointing, feature transport and critic fitting; excludes setup and test evaluation')
     result['ppo_profile'] = config.experiment.ppo_profile
+    if initial_train_probe is not None:
+        result.update(initial_train_probe=initial_train_probe, final_train_probe=final_train_probe)
+    if initial_sampled_probe is not None:
+        result.update(initial_sampled_train_probe=initial_sampled_probe,
+                      final_sampled_train_probe=final_sampled_probe)
     result['evaluation_split'] = config.experiment.evaluation_split
     if calibration:
         result['initial_validation'] = result.pop('initial_test')

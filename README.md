@@ -1,12 +1,16 @@
 # Confidence or correctness?
 
+**Current workflow:** [Screened GSM8K GRPO study](#screened-gsm8k-grpo-study-current-protocol).
+Establish neutral learning on 128 screened practice questions before comparing
+prompt styles. The PPO and unscreened pilots below are historical protocols.
+
 **Does the way a language model expresses confidence change how well it learns from experience?**
 
 A language model writes an answer one token at a time. Reinforcement learning lets it practice: generate an answer, receive a reward, and adjust its parameters so useful behavior becomes more likely.
 
 The same model can be prompted to sound decisive or to question its reasoning. These instructions may change what it tries, whether it catches mistakes, and how long it spends answering. This project asks whether those differences change **learning**, beyond changing the wording of a single answer.
 
-## From answers to learning
+## Original PPO pilot: learning from answers
 
 Suppose the question is “What is 17 × 18?” The correct answer is 306. A confident answer might state it directly; a self-critical answer might check the multiplication first. Either can still be right or wrong.
 
@@ -19,7 +23,7 @@ We use **Proximal Policy Optimization (PPO)** with two neural networks:
 
 The model learns from answers it generates and an external correctness signal. It does not decide for itself which answers deserve rewards.
 
-## The experiment
+## Original PPO experimental design
 
 Every run starts from the same **Qwen2.5-Math-1.5B** weights. We vary an instruction before the question:
 
@@ -55,7 +59,7 @@ We report paired question/seed bootstrap intervals, including 97.5% intervals fo
 
 This is an **exploratory pilot** on previously inspected questions. Five seeds do not guarantee significance. Manually check style compliance and grading errors before interpreting results. Differences could involve checking behavior, response length or wording—not confidence alone. If neutral PPO fails to learn, investigate that baseline before drawing broad conclusions about the styles.
 
-## Run on Duke
+## Original PPO pilot commands
 
 This repository has its own code, configs, Python environments and outputs. Its runtime is a private snapshot of the original project, with explicit evaluation under both prompts. After asset import, it does not import from the original project.
 
@@ -181,3 +185,127 @@ rates appear as `0.000`; consult `run.json` for the configured value. Select
 settings using validation, then confirm across seeds before expanding the study.
 
 The aim is a small, interpretable test of whether how we ask a model to reason changes what it learns from reward—and whether that learning persists without the original instruction.
+
+## Screened GSM8K GRPO study (current protocol)
+
+Use this workflow instead of the unscreened diagnostic below. On the **Duke
+login terminal**, after syncing the repository and finishing older training jobs:
+
+```bash
+bash scripts/gsm8k_study.sh pilot
+```
+
+This queues screening, a two-update GPU smoke test, three neutral training runs,
+and an automatic learning-gate report. Dependencies stop later stages if an
+earlier stage fails. Screening uses one A5000 GPU; training uses two GPUs per job,
+with at most two training jobs at once. The default output directory is
+`outputs/gsm8k-screened-grpo-v1`; duplicate submissions to it are refused.
+
+The protocol reserves 512 randomly ordered, prompt-length-eligible validation
+questions from GSM8K's official training split before screening. It then screens
+at most 512 separate candidates with eight neutral base-model answers each,
+selecting the first 128 with exactly 2–6 correct answers. Any candidate with a
+verifier status other than correct/incorrect is ineligible; all statuses and
+responses are saved for inspection. Generation uses temperature 1, top-p 1,
+top-k -1 and a 2,048-token response ceiling. Screening stops after the first
+completed batch containing 128 qualifying questions and fails if the candidate
+budget is insufficient. Normalized duplicate wording cannot cross pools, and
+every question must fit every style's 512-token prompt ceiling. Dataset revision,
+selected IDs, data/model/code hashes and screening cost are recorded. The
+official GSM8K test split is never loaded.
+
+Neutral pilot seeds are 201, 202 and 203. Each starts from the original base
+weights and uses 40 updates × 16 questions × 4 answers = 2,560 training answers,
+with actor learning rate `1e-6` and correctness-only rewards. Before/after
+evaluation includes greedy practice accuracy, eight independently seeded fresh
+practice samples per question, assigned-style validation and common-neutral
+validation. Screening and sampled-evaluation seeds are separate; screening
+answers are never reused as a learning baseline. Full-precision telemetry records
+learning rates, actor gradients and policy-change proxies, plus per-update mixed,
+all-correct and all-incorrect group counts. These proxies do not measure exact
+parameter displacement. The runtime's sampled-evaluation extension is exercised
+by the GPU smoke test before any 40-update runs are allowed.
+
+Inspect progress and the gate:
+
+```bash
+squeue -u "$USER"
+bash scripts/gsm8k_study.sh status
+```
+
+The frozen gate requires complete finite audits, positive learning rates,
+nonzero actor gradients and a nonzero policy-change proxy; positive greedy
+practice gain in **each** pilot seed; and positive mean independently sampled
+practice gain. Validation improvement is reported but does not determine this
+optimization gate. A failed gate exits unsuccessfully and blocks the style
+comparison. Inspect `logs/`, `screening-summary.json`, `smoke.log`, and the
+per-seed training logs for failures. Partial runs do not automatically resume.
+Do not change the thresholds in place after seeing results; changed protocols
+need a new output directory.
+
+Only after a passed gate, submit the full comparison:
+
+```bash
+bash scripts/gsm8k_study.sh full
+# Once all runs finish:
+bash scripts/gsm8k_study.sh report
+```
+
+This launches 15 fresh runs: neutral, confident and self-critical prompts × five
+matched seeds (301–305). Pilot seeds are excluded from this comparison. Every
+condition uses the same screened questions and settings, starting from the
+original base weights. The two primary contrasts compare held-out neutral-prompt
+learning gains against neutral training, with paired seed/question bootstrap
+95% and 97.5% intervals. Assigned-style gains are secondary. Five seeds provide
+exploratory uncertainty estimates, not guaranteed significance. Validation is a
+development set once results guide decisions. Equal answer budgets need not
+mean equal token or compute budgets.
+
+The final `summary.json` includes per-seed evidence, verifier statuses, lengths,
+truncation, group counts, pilot/full training costs and separate screening cost.
+Training GPU hours exclude explicit evaluation and setup; each completed run's
+`execution.json` separately records driver wall time including evaluation.
+`review.jsonl` contains a fixed random sample of matched before/after answers
+from every style for manual grading/style-compliance review. Higher mixed-group
+fractions are potential mechanism evidence, not proof of causation.
+
+Two-thirds-layer error probes and J-lens remain conditional follow-ups. Before
+probing, define local-error versus eventual-answer labels, match prefixes before
+the answer, split by question, and include probe-capacity/control-task checks.
+The behavioral pipeline does not automatically launch probes or claim a causal
+mechanism. Do not edit this checkout or shared environments while jobs run:
+prepared hashes are checked before subsequent runs.
+
+## Earlier unscreened GSM8K learning check
+
+Before expanding a style study, use a separate neutral GRPO diagnostic to ask
+whether the model can improve on a small, repeatedly practiced set. On Duke:
+
+```bash
+bash scripts/gsm8k_pilot.sh submit
+# After completion:
+bash scripts/gsm8k_pilot.sh report
+```
+
+The job downloads only the official GSM8K training split, resolves and records
+an immutable dataset revision, and selects 32 practice and 256 held-out validation
+questions by a deterministic shuffle. Normalized duplicate wording cannot cross
+splits. Every selected question must fit the 512-token prompt budget; insufficient
+counts fail explicitly. The official test set is unused. Preparation requires
+Hugging Face access; failures are recorded in `preparation.log`.
+
+It uses the same base model, neutral completion prompt, Math-Verify correctness
+reward and GRPO runtime, with seed 301, learning rate `1e-6`, 20 updates and
+1,280 answers. The 32 practice questions repeat during training. An optional
+training-probe evaluation records greedy accuracy on those questions before and
+after training, alongside the 256-question validation evaluation. Improvement
+on practice questions is an optimization check, not evidence of generalization;
+near-ceiling initial accuracy would limit its usefulness. No improvement does
+not by itself establish a code bug.
+
+Outputs are isolated under `outputs/gsm8k-grpo-learning-check-v1`, with request,
+data/protocol manifest, code provenance, logs, full before/after answers,
+checkpoint and `report.txt`. Submission refuses to reuse the output directory.
+This is a new diagnostic protocol, not a continuation of the MATH pilot. Do not
+update the checkout while training jobs are active. The optional training-probe
+setting defaults to off for existing protocols.
