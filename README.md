@@ -125,4 +125,37 @@ Run local checks with:
 PYTHONPATH=src python3 -m pytest -q
 ```
 
+## Neutral GRPO pilot
+
+To check whether removing the learned critic improves learning, first run a
+neutral-only GRPO pilot. On the **Duke login terminal**, from this repository:
+
+```bash
+bash scripts/grpo_pilot.sh submit
+```
+
+This submits one two-A5000 job with seed 301, 20 updates and 1,280 answers,
+keeping the actor learning rate at `1e-6`. It copies and checksum-verifies the
+prepared neutral training and validation data from `outputs/confidence-v1`.
+Evaluation uses the 64 validation questions; test questions are not evaluated.
+The existing runtime performs GRPO numerical and reward checks before training.
+
+Results go to a new `outputs/confidence-grpo-neutral-v1` directory. Submission
+refuses to reuse an existing destination. A manifest records the pilot settings
+and data hashes; the runtime records code provenance and the resolved config.
+Completed PPO results are preserved. Cancel unwanted PPO jobs explicitly before
+starting this pilot; the script does not cancel jobs or rebuild environments.
+Updating repository scripts invalidates the old study's prepared code hashes,
+so do not update the checkout while its PPO jobs are still running.
+
+```bash
+tail -f outputs/confidence-grpo-neutral-v1/grpo-seed301.log
+bash scripts/grpo_pilot.sh report
+```
+
+The job also generates `report.txt` automatically on success. Missing results
+mean the job is pending, running or failed; inspect its training and Slurm logs.
+One seed on 64 validation questions is diagnostic evidence. Establish a useful
+neutral baseline before expanding to multiple seeds and prompt conditions.
+
 The aim is a small, interpretable test of whether how we ask a model to reason changes what it learns from reward—and whether that learning persists without the original instruction.
